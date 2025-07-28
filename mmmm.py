@@ -6,15 +6,15 @@ import requests
 import string # Для генерации промокодов
 
 # --- Настройки бота ---
-BOT_TOKEN = "YOUR_BOT_TOKEN"  # ЗАМЕНИТЕ НА ВАШ ТОКЕН БОТА
-CRYPTO_PAY_API_TOKEN = "YOUR_CRYPTO_PAY_API_TOKEN"  # ЗАМЕНИТЕ НА ВАШ ТОКЕН CRYPTO PAY API
+BOT_TOKEN = "8333111223:AAFDHMtpGkrNV3CVeAwUHkEIkYcNtbxY5fQ"  # ЗАМЕНИТЕ НА ВАШ ТОКЕН БОТА
+CRYPTO_PAY_API_TOKEN = "436989:AA06bTX8FJ1NC5lO3EkJERAGxdHj2K21Kv0"  # ЗАМЕНИТЕ НА ВАШ ТОКЕН CRYPTO PAY API
 CRYPTO_PAY_API_URL = "https://pay.crypt.bot/api/" # Базовый URL Crypto Pay API
 
 # --- ID Основных Администраторов ---
 # ВАЖНО: Добавьте сюда свой Telegram ID, чтобы получить доступ к админ-функциям.
 # Узнать свой ID можно у @userinfobot в Telegram.
 # Эти ID всегда имеют полный доступ и могут выдавать/отзывать админки другим.
-SUPER_ADMIN_IDS = [123456789] # ЗАМЕНИТЕ ЭТИ ID НА РЕАЛЬНЫЕ ID ГЛАВНЫХ АДМИНИСТРАТОРОВ
+SUPER_ADMIN_IDS = [7692185941] # ЗАМЕНИТЕ ЭТИ ID НА РЕАЛЬНЫЕ ID ГЛАВНЫХ АДМИНИСТРАТОРОВ
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
