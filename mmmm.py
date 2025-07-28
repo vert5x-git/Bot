@@ -472,4 +472,411 @@ def dice_set_bet_prompt(message):
 @bot.message_handler(regexp='Бросить кубик')
 def roll_dice(message):
     chat_id = message.chat.id
-    if chat_id n
+    if chat_id not in user_balances or user_balances[chat_id].get("current_bet", 0) <= 0 or user_balances[chat_id].get("game_type") != "dice":
+        bot.send_message(chat_id, "Пожалуйста, установите ставку для игры Кубики, используя кнопку 'Ввести ставку (Кубики)'.")
+        dice_start_menu(message)
+        return
+
+    user_data = get_user_data(chat_id)
+    user_bet = user_data["current_bet"]
+    update_balance(chat_id, -user_bet) # Списываем ставку
+
+    bot_roll = random.randint(1, 6)
+    user_roll = random.randint(1, 6)
+
+    bot.send_message(chat_id, f"Вы бросили: {user_roll}")
+    bot.send_message(chat_id, f"Я бросил: {bot_roll}")
+
+    if user_roll > bot_roll:
+        win_amount = user_bet * 2
+        update_balance(chat_id, win_amount)
+        bot.send_message(chat_id, f"{EMOJI_CUBE_WIN} Поздравляю! Вы выиграли {win_amount:.2f} монет!\n"
+                                   f"Ваш баланс: {user_data['balance']:.2f} монет.")
+    elif user_roll < bot_roll:
+        bot.send_message(chat_id, f"{EMOJI_CUBE_LOSE} К сожалению, вы проиграли {user_bet:.2f} монет.\n"
+                                   f"Ваш баланс: {user_data['balance']:.2f} монет. 😢")
+    else:
+        update_balance(chat_id, user_bet) # Возвращаем ставку
+        bot.send_message(chat_id, f"Ничья! Ваша ставка {user_bet:.2f} монет возвращена.\n"
+                                   f"Ваш баланс: {user_data['balance']:.2f} монет.")
+
+    user_data["game_type"] = ""
+    send_welcome(message)
+
+# --- Coin Flip Game ---
+@bot.message_handler(regexp='Монетка 🪙')
+def coin_flip_start_menu(message):
+    bot.send_message(message.chat.id, f"{EMOJI_COIN_FLIP} Добро пожаловать в игру Монетка! Орёл или Решка?")
+    markup = types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
+    markup.add(
+        types.KeyboardButton('Бросить монетку'),
+        types.KeyboardButton('Ввести ставку (Монетка)')
+    )
+    bot.send_message(message.chat.id, "Выберите действие:", reply_markup=markup)
+
+@bot.message_handler(regexp='Ввести ставку (Монетка)')
+def coin_flip_set_bet_prompt(message):
+    prompt_for_bet(message, "Монетка", lambda msg: process_bet(msg, "coin_flip", coin_flip_start_menu))
+
+@bot.message_handler(regexp='Бросить монетку')
+def flip_coin_prompt(message):
+    chat_id = message.chat.id
+    if chat_id not in user_balances or user_balances[chat_id].get("current_bet", 0) <= 0 or user_balances[chat_id].get("game_type") != "coin_flip":
+        bot.send_message(chat_id, "Пожалуйста, установите ставку для игры Монетка, используя кнопку 'Ввести ставку (Монетка)'.")
+        coin_flip_start_menu(message)
+        return
+
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    markup.add(
+        types.InlineKeyboardButton("Орёл", callback_data="coin_flip_heads"),
+        types.InlineKeyboardButton("Решка", callback_data="coin_flip_tails")
+    )
+    bot.send_message(chat_id, f"Ваша ставка: {user_balances[chat_id]['current_bet']}\n\nВыберите: Орёл или Решка?", reply_markup=markup)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('coin_flip_'))
+def coin_flip_callback_query(call):
+    chat_id = call.message.chat.id
+    if chat_id not in user_balances or user_balances[chat_id].get("game_type") != "coin_flip":
+        bot.answer_callback_query(call.id, "Эта игра неактивна или уже завершена.")
+        return
+
+    user_data = get_user_data(chat_id)
+    user_choice = call.data.split('_')[2]
+    result = random.choice(["heads", "tails"])
+    result_text = "Орёл" if result == "heads" else "Решка"
+    user_choice_text = "Орёл" if user_choice == "heads" else "Решка"
+    user_bet = user_data["current_bet"]
+    update_balance(chat_id, -user_bet) # Списываем ставку
+
+    bot.edit_message_text(chat_id=chat_id, message_id=call.message.message_id, text=f"Вы выбрали: **{user_choice_text}**\nМонетка подброшена... и выпал(а) **{result_text}**!", parse_mode='Markdown')
+
+    if user_choice == result:
+        win_amount = user_bet * 1.95 # Slightly less than 2x for house edge
+        update_balance(chat_id, win_amount)
+        bot.send_message(chat_id, f"{EMOJI_CUBE_WIN} Поздравляем! Вы угадали и выиграли {win_amount:.2f} монет!\n"
+                                   f"Ваш баланс: {user_data['balance']:.2f} монет.")
+    else:
+        bot.send_message(chat_id, f"{EMOJI_CUBE_LOSE} К сожалению, вы не угадали и проиграли {user_bet:.2f} монет.\n"
+                                   f"Ваш баланс: {user_data['balance']:.2f} монет. 😢")
+
+    user_data["game_type"] = ""
+    send_welcome(call.message)
+
+
+# --- Higher or Lower Game ---
+@bot.message_handler(regexp='Больше/Меньше 🔢')
+def higher_lower_start_menu(message):
+    bot.send_message(message.chat.id, f"{EMOJI_HIGHER_LOWER} Добро пожаловать в игру Больше/Меньше! Угадайте, будет ли следующее число больше или меньше.")
+    markup = types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
+    markup.add(
+        types.KeyboardButton('Начать Больше/Меньше'),
+        types.KeyboardButton('Ввести ставку (Больше/Меньше)')
+    )
+    bot.send_message(message.chat.id, "Выберите действие:", reply_markup=markup)
+
+@bot.message_handler(regexp='Ввести ставку (Больше/Меньше)')
+def higher_lower_set_bet_prompt(message):
+    prompt_for_bet(message, "Больше/Меньше", lambda msg: process_bet(msg, "higher_lower", higher_lower_start_menu))
+
+@bot.message_handler(regexp='Начать Больше/Меньше')
+def start_higher_lower_game(message):
+    chat_id = message.chat.id
+    if chat_id not in user_balances or user_balances[chat_id].get("current_bet", 0) <= 0 or user_balances[chat_id].get("game_type") != "higher_lower":
+        bot.send_message(chat_id, "Пожалуйста, установите ставку для игры Больше/Меньше, используя кнопку 'Ввести ставку (Больше/Меньше)'.")
+        higher_lower_start_menu(message)
+        return
+
+    user_data = get_user_data(chat_id)
+    bet = user_data["current_bet"]
+    update_balance(chat_id, -bet) # Списываем ставку
+
+    first_number = random.randint(1, 100)
+    user_data.update({
+        "game_type": "higher_lower",
+        "higher_lower_number": first_number
+    })
+
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    markup.add(
+        types.InlineKeyboardButton("Больше", callback_data="hl_higher"),
+        types.InlineKeyboardButton("Меньше", callback_data="hl_lower")
+    )
+    bot.send_message(chat_id, f"Текущее число: **{first_number}**. Ваша ставка: {user_data['current_bet']:.2f} монет\n\nСледующее число будет больше или меньше?", parse_mode='Markdown', reply_markup=markup)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('hl_'))
+def higher_lower_callback_query(call):
+    chat_id = call.message.chat.id
+    if chat_id not in user_balances or user_balances[chat_id].get("game_type") != "higher_lower":
+        bot.answer_callback_query(call.id, "Эта игра неактивна или уже завершена.")
+        return
+
+    user_data = get_user_data(chat_id)
+    user_choice = call.data.split('_')[1]
+    current_number = user_data["higher_lower_number"]
+    next_number = random.randint(1, 100)
+    user_bet = user_data["current_bet"]
+
+    bot.edit_message_text(chat_id=chat_id, message_id=call.message.message_id, text=f"Текущее число: **{current_number}**. Вы выбрали: **{user_choice}**.\n\nСледующее число: **{next_number}**.", parse_mode='Markdown')
+
+    win = False
+    if user_choice == "higher" and next_number > current_number:
+        win = True
+    elif user_choice == "lower" and next_number < current_number:
+        win = True
+    elif next_number == current_number: # Tie
+        update_balance(chat_id, user_bet) # Возвращаем ставку
+        bot.send_message(chat_id, f"Ничья! Числа одинаковые. Ваша ставка {user_bet:.2f} монет возвращена.\n"
+                                   f"Ваш баланс: {user_data['balance']:.2f} монет.")
+        user_data["game_type"] = ""
+        send_welcome(call.message)
+        return
+
+    if win:
+        win_amount = user_bet * 1.9
+        update_balance(chat_id, win_amount)
+        bot.send_message(chat_id, f"{EMOJI_CUBE_WIN} Поздравляем! Вы угадали! Вы выиграли {win_amount:.2f} монет!\n"
+                                   f"Ваш баланс: {user_data['balance']:.2f} монет.")
+    else:
+        bot.send_message(chat_id, f"{EMOJI_CUBE_LOSE} К сожалению, вы не угадали и проиграли {user_bet:.2f} монет.\n"
+                                   f"Ваш баланс: {user_data['balance']:.2f} монет. 😢")
+
+    user_data["game_type"] = ""
+    send_welcome(call.message)
+
+# --- Slot Machine Game ---
+@bot.message_handler(regexp='Слоты 🎰')
+def slot_machine_start_menu(message):
+    bot.send_message(message.chat.id, f"{EMOJI_SLOT_MACHINE} Добро пожаловать в Слоты! Совпадите 3 символа, чтобы выиграть!")
+    markup = types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
+    markup.add(
+        types.KeyboardButton('Крутить Слоты'),
+        types.KeyboardButton('Ввести ставку (Слоты)')
+    )
+    bot.send_message(message.chat.id, "Выберите действие:", reply_markup=markup)
+
+@bot.message_handler(regexp='Ввести ставку (Слоты)')
+def slot_machine_set_bet_prompt(message):
+    prompt_for_bet(message, "Слоты", lambda msg: process_bet(msg, "slot_machine", slot_machine_start_menu))
+
+@bot.message_handler(regexp='Крутить Слоты')
+def spin_slot_machine(message):
+    chat_id = message.chat.id
+    if chat_id not in user_balances or user_balances[chat_id].get("current_bet", 0) <= 0 or user_balances[chat_id].get("game_type") != "slot_machine":
+        bot.send_message(chat_id, "Пожалуйста, установите ставку для игры Слоты, используя кнопку 'Ввести ставку (Слоты)'.")
+        slot_machine_start_menu(message)
+        return
+
+    user_data = get_user_data(chat_id)
+    user_bet = user_data["current_bet"]
+    update_balance(chat_id, -user_bet) # Списываем ставку
+
+    symbols = ['🍒', '🍋', '🔔', '💎', '🍀', '🍓']
+
+    sent_message = bot.send_message(chat_id, "Крутим...")
+    for _ in range(3):
+        spinning_symbols = [random.choice(symbols) for _ in range(3)]
+        bot.edit_message_text(chat_id=chat_id, message_id=sent_message.message_id, text=f"Крутим...\n\n{' '.join(spinning_symbols)}")
+        time.sleep(0.5)
+
+    result = [random.choice(symbols) for _ in range(3)]
+    bot.edit_message_text(chat_id=chat_id, message_id=sent_message.message_id, text=f"Результат:\n\n{' '.join(result)}")
+
+    win_multiplier = 0
+    if result[0] == result[1] == result[2]:
+        if result[0] == '💎': win_multiplier = 10 # Jackpot
+        elif result[0] == '🍀': win_multiplier = 7
+        else: win_multiplier = 5 # Three of a kind
+    elif result[0] == result[1] or result[1] == result[2] or result[0] == result[2]:
+        win_multiplier = 2 # Two of a kind
+
+    if win_multiplier > 0:
+        win_amount = user_bet * win_multiplier
+        update_balance(chat_id, win_amount)
+        bot.send_message(chat_id, f"{EMOJI_CUBE_WIN} Поздравляем! Вы выиграли {win_amount:.2f} монет!\n"
+                                   f"Ваш баланс: {user_data['balance']:.2f} монет.")
+    else:
+        bot.send_message(chat_id, f"{EMOJI_CUBE_LOSE} К сожалению, вы проиграли {user_bet:.2f} монет.\n"
+                                   f"Ваш баланс: {user_data['balance']:.2f} монет. 😢")
+
+    user_data["game_type"] = ""
+    send_welcome(message)
+
+---
+### Система Донатов и Привилегий (Crypto Pay)
+
+```python
+@bot.message_handler(regexp='Донат/Привилегии ✨')
+def donation_menu(message):
+    chat_id = message.chat.id
+    user_data = get_user_data(chat_id)
+    
+    status = "Активна 🌟" if user_data["has_premium"] else "Неактивна ❌"
+    donations = user_data["donations_count"]
+
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    markup.add(
+        types.InlineKeyboardButton("Донат 1 TON (премиум-статус)", callback_data="donate_1_ton"),
+        types.InlineKeyboardButton("Донат 5 TON (супер-премиум)", callback_data="donate_5_ton"),
+        types.InlineKeyboardButton("Проверить статус доната", callback_data="check_donation_status")
+    )
+    bot.send_message(chat_id,
+                     f"Привет! Здесь ты можешь поддержать бота и получить привилегии.\n\n"
+                     f"Твой премиум-статус: **{status}**\n"
+                     f"Всего донатов: **{donations}**\n\n"
+                     f"Выбери сумму для доната:",
+                     parse_mode='Markdown', reply_markup=markup)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('donate_'))
+def handle_donate_callback(call):
+    chat_id = call.message.chat.id
+    amount_str = call.data.split('_')[1]
+    amount = int(amount_str)
+    
+    headers = {
+        "Content-Type": "application/json",
+        "Crypto-Pay-API-Token": CRYPTO_PAY_API_TOKEN
+    }
+    payload = {
+        "asset": "TON",
+        "amount": amount,
+        "description": f"Донат для бота ({amount} TON)",
+        "external_id": f"user_{chat_id}_amount_{amount}_{int(time.time())}",
+        "timeout_seconds": 3600,
+        "allow_anonymous": True,
+        "allow_comments": True
+    }
+    
+    try:
+        response = requests.post(f"{CRYPTO_PAY_API_URL}createInvoice", headers=headers, json=payload)
+        response.raise_for_status()
+        invoice_data = response.json()
+        
+        if invoice_data["ok"]:
+            invoice_url = invoice_data["result"]["pay_url"]
+            invoice_id = invoice_data["result"]["invoice_id"]
+            
+            # Сохраняем ID инвойса для проверки статуса
+            user_data = get_user_data(chat_id)
+            user_data["last_invoice_id"] = invoice_id
+            user_data["last_invoice_amount"] = amount
+
+            markup = types.InlineKeyboardMarkup()
+            markup.add(
+                types.InlineKeyboardButton("Оплатить Донат", url=invoice_url),
+                types.InlineKeyboardButton("Я оплатил (проверить статус)", callback_data="check_donation_status")
+            )
+            bot.send_message(chat_id,
+                             f"Для доната в **{amount} TON** перейди по ссылке ниже.\n\n"
+                             f"**После оплаты обязательно нажми кнопку 'Я оплатил'**:",
+                             parse_mode='Markdown', reply_markup=markup)
+        else:
+            bot.send_message(chat_id, f"{EMOJI_ERROR} Ошибка при создании инвойса: {invoice_data.get('error', 'Неизвестная ошибка')}")
+            print(f"Crypto Pay API Error: {invoice_data}")
+            
+    except requests.exceptions.RequestException as e:
+        bot.send_message(chat_id, f"{EMOJI_ERROR} Произошла ошибка при обращении к платежной системе. Попробуйте позже. ({e})")
+        print(f"Request Error: {e}")
+    
+    bot.answer_callback_query(call.id)
+
+@bot.callback_query_handler(func=lambda call: call.data == 'check_donation_status')
+def check_donation_status(call):
+    chat_id = call.message.chat.id
+    user_data = get_user_data(chat_id)
+    
+    if "last_invoice_id" not in user_data:
+        bot.answer_callback_query(call.id, "Нет активных инвойсов для проверки.")
+        return
+
+    invoice_id = user_data["last_invoice_id"]
+    expected_amount = user_data["last_invoice_amount"]
+
+    headers = {
+        "Crypto-Pay-API-Token": CRYPTO_PAY_API_TOKEN
+    }
+    
+    try:
+        response = requests.post(f"{CRYPTO_PAY_API_URL}getInvoices", headers=headers, json={"invoice_ids": [invoice_id]})
+        response.raise_for_status()
+        invoices_data = response.json()
+        
+        if invoices_data["ok"] and invoices_data["result"]["items"]:
+            invoice = invoices_data["result"]["items"][0]
+            if invoice["status"] == "paid":
+                if float(invoice["amount"]) >= expected_amount:
+                    update_ton_balance(chat_id, float(invoice["amount"])) # Добавляем TON на баланс пользователя
+                    user_data["has_premium"] = True
+                    user_data["donations_count"] += 1
+                    bot.send_message(chat_id, f"{EMOJI_SUCCESS} Донат успешно оплачен! Вы получили {float(invoice['amount']):.2f} TON и премиум-статус! Спасибо за поддержку!")
+                    
+                    del user_data["last_invoice_id"]
+                    del user_data["last_invoice_amount"]
+                    send_welcome(call.message)
+                else:
+                    bot.send_message(chat_id, f"{EMOJI_ERROR} Донат оплачен, но сумма {invoice['amount']} TON не соответствует ожидаемой {expected_amount} TON. Пожалуйста, свяжитесь с поддержкой.")
+            elif invoice["status"] == "active":
+                bot.send_message(chat_id, f"⏳ Инвойс еще активен, но пока не оплачен. Пожалуйста, завершите оплату.")
+            elif invoice["status"] == "expired":
+                bot.send_message(chat_id, f"{EMOJI_ERROR} Срок действия инвойса истек. Попробуйте снова.")
+                del user_data["last_invoice_id"]
+                del user_data["last_invoice_amount"]
+            elif invoice["status"] == "cancelled":
+                bot.send_message(chat_id, f"{EMOJI_ERROR} Инвойс был отменен. Попробуйте снова.")
+                del user_data["last_invoice_id"]
+                del user_data["last_invoice_amount"]
+        else:
+            bot.send_message(chat_id, f"{EMOJI_ERROR} Не удалось найти инвойс или произошла ошибка в Crypto Pay. Пожалуйста, убедитесь, что вы создали инвойс и попробуйте снова.")
+            print(f"Crypto Pay API Error (getInvoices): {invoices_data}")
+            
+    except requests.exceptions.RequestException as e:
+        bot.send_message(chat_id, f"{EMOJI_ERROR} Произошла ошибка при обращении к платежной системе. Попробуйте позже. ({e})")
+        print(f"Request Error (getInvoices): {e}")
+
+    bot.answer_callback_query(call.id)
+
+---
+### Админ-панель (полностью на инлайн-кнопках)
+
+```python
+# --- Админ-панель ---
+@bot.message_handler(commands=['admin_panel'])
+@bot.message_handler(regexp='Админ-панель ⚙️')
+def admin_panel_menu(message):
+    chat_id = message.chat.id
+    if not is_admin(chat_id):
+        bot.send_message(chat_id, "У вас нет прав администратора для доступа к этой панели. ⛔")
+        return
+
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    markup.add(
+        types.InlineKeyboardButton("Управление пользователями 👥", callback_data="admin_users_menu"),
+        types.InlineKeyboardButton("Промокоды 🎁", callback_data="admin_promocodes_menu"),
+        types.InlineKeyboardButton("Казна Чата 🏦", callback_data="admin_treasury_menu"),
+        types.InlineKeyboardButton("Общая статистика 📊", callback_data="admin_general_stats"),
+        types.InlineKeyboardButton("Рассылка 📢", callback_data="admin_broadcast_menu"),
+        types.InlineKeyboardButton("Закрыть админ-панель", callback_data="close_admin_panel")
+    )
+    bot.send_message(chat_id, f"{EMOJI_ADMIN_PANEL} **Добро пожаловать в админ-панель!**", parse_mode='Markdown', reply_markup=markup)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('admin_'))
+def admin_callback_query(call):
+    chat_id = call.message.chat.id
+    if not is_admin(chat_id):
+        bot.answer_callback_query(call.id, "У вас нет прав администратора.")
+        return
+    
+    action = call.data.split('_')[1]
+
+    if action == "users_menu":
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        markup.add(
+            types.InlineKeyboardButton("Выдать привилегию ➕", callback_data="admin_grant_premium_prompt"),
+            types.InlineKeyboardButton("Убрать привилегию ➖", callback_data="admin_revoke_premium_prompt"),
+            types.InlineKeyboardButton("Выдать админку ✅", callback_data="admin_grant_admin_prompt"), # Новая
+            types.InlineKeyboardButton("Убрать админку ❌", callback_data="admin_revoke_admin_prompt"), # Новая
+            types.InlineKeyboardButton("Выдать монеты 💰", callback_data="admin_give_currency_prompt"), # Новая
+            types.InlineKeyboardButton("Выдать TON 💎", callback_data="admin_give_ton_prompt"), # Новая
+            types.InlineKeyboardButton("Посмотреть инфо о пользователе ℹ️", callback_data="admin_get_user_info_prompt"),
+            types.InlineKeyboardButton("← Назад в Админ-панель", callback_data="admin_panel_back")
+        )
+        bot.edit_message_text(chat_id=chat_id, message_id=call.m
