@@ -879,4 +879,491 @@ def admin_callback_query(call):
             types.InlineKeyboardButton("Посмотреть инфо о пользователе ℹ️", callback_data="admin_get_user_info_prompt"),
             types.InlineKeyboardButton("← Назад в Админ-панель", callback_data="admin_panel_back")
         )
-        bot.edit_message_text(chat_id=chat_id, message_id=call.m
+        bot.edit_message_text(chat_id=chat_id, message_id=call.message.message_id,
+                              text="Выберите действие с пользователями:", reply_markup=markup)
+    
+    elif action == "promocodes_menu":
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        markup.add(
+            types.InlineKeyboardButton("Создать промокод ✨", callback_data="admin_create_promocode_prompt"),
+            types.InlineKeyboardButton("Посмотреть промокоды 📜", callback_data="admin_view_promocodes"),
+            types.InlineKeyboardButton("Удалить промокод 🗑️", callback_data="admin_delete_promocode_prompt"),
+            types.InlineKeyboardButton("← Назад в Админ-панель", callback_data="admin_panel_back")
+        )
+        bot.edit_message_text(chat_id=chat_id, message_id=call.message.message_id,
+                              text="Управление промокодами:", reply_markup=markup)
+    
+    elif action == "treasury_menu":
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        treasury_balance = chat_treasury.get("balance", 0)
+        markup.add(
+            types.InlineKeyboardButton("Пополнить казну ➕", callback_data="admin_add_to_treasury_prompt"),
+            types.InlineKeyboardButton("Вывести из казны ➖", callback_data="admin_remove_from_treasury_prompt"),
+            types.InlineKeyboardButton("← Назад в Админ-панель", callback_data="admin_panel_back")
+        )
+        bot.edit_message_text(chat_id=chat_id, message_id=call.message.message_id,
+                              text=f"{EMOJI_TREASURY} **Казна Чата:** {treasury_balance:.2f} монет.\nВыберите действие:", parse_mode='Markdown', reply_markup=markup)
+
+    elif action == "general_stats":
+        total_users = len(user_balances)
+        premium_users = sum(1 for user_info in user_balances.values() if user_info.get("has_premium", False))
+        admin_users = sum(1 for user_info in user_balances.values() if user_info.get("is_admin", False))
+        total_donations_count = sum(user_info.get("donations_count", 0) for user_info in user_balances.values())
+
+        stats_text = (
+            f"**Общая статистика бота:**\n"
+            f"  Всего пользователей: {total_users}\n"
+            f"  Премиум-пользователей: {premium_users}\n"
+            f"  Администраторов: {admin_users}\n"
+            f"  Всего донатов (по счетчику): {total_donations_count}\n"
+            f"  Баланс казны: {chat_treasury.get('balance', 0):.2f} монет"
+        )
+        markup = types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("← Назад в Админ-панель", callback_data="admin_panel_back"))
+        bot.edit_message_text(chat_id=chat_id, message_id=call.message.message_id,
+                              text=stats_text, parse_mode='Markdown', reply_markup=markup)
+
+    elif action == "broadcast_menu":
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        markup.add(
+            types.InlineKeyboardButton("Начать рассылку ✉️", callback_data="admin_start_broadcast_prompt"),
+            types.InlineKeyboardButton("← Назад в Админ-панель", callback_data="admin_panel_back")
+        )
+        bot.edit_message_text(chat_id=chat_id, message_id=call.message.message_id,
+                              text=f"{EMOJI_BROADCAST} Рассылка сообщений всем пользователям бота.", reply_markup=markup)
+
+    elif action == "panel_back":
+        admin_panel_menu(call.message) # Возвращаемся к главному меню админки
+
+    bot.answer_callback_query(call.id) # Подтверждаем обработку callback-запроса
+
+@bot.callback_query_handler(func=lambda call: call.data == 'close_admin_panel')
+def close_admin_panel_callback(call):
+    chat_id = call.message.chat.id
+    if not is_admin(chat_id):
+        bot.answer_callback_query(call.id, "У вас нет прав администратора.")
+        return
+    bot.edit_message_text(chat_id=chat_id, message_id=call.message.message_id,
+                          text="Админ-панель закрыта. Возвращайтесь, когда понадобится.", reply_markup=None)
+    send_welcome(call.message) # Возвращаемся в главное меню
+
+# --- Админ: Управление пользователями (продолжение) ---
+@bot.callback_query_handler(func=lambda call: call.data.startswith('admin_grant_premium'))
+def admin_grant_premium_prompt(call):
+    chat_id = call.message.chat.id
+    bot.edit_message_text(chat_id=chat_id, message_id=call.message.message_id,
+                          text="Введите Telegram ID пользователя, которому хотите выдать привилегию:",
+                          reply_markup=types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("Отмена", callback_data="admin_users_menu")))
+    user_states[chat_id] = {"state": "admin_waiting_grant_premium", "message_id": call.message.message_id}
+
+@bot.message_handler(func=lambda message: user_states.get(message.chat.id, {}).get("state") == "admin_waiting_grant_premium")
+def process_admin_grant_premium(message):
+    chat_id = message.chat.id
+    if not is_admin(chat_id): return
+    msg_to_edit_id = user_states[chat_id].get("message_id")
+    try:
+        target_user_id = int(message.text)
+        user_data = get_user_data(target_user_id)
+        user_data["has_premium"] = True
+        bot.edit_message_text(chat_id=chat_id, message_id=msg_to_edit_id,
+                              text=f"{EMOJI_SUCCESS} Пользователю `{target_user_id}` выдана премиум-привилегия.", parse_mode='Markdown')
+        try: bot.send_message(target_user_id, f"{EMOJI_PREMIUM_GRANTED} Администратор выдал вам премиум-привилегию!")
+        except Exception as e: print(f"Could not notify user {target_user_id}: {e}")
+    except ValueError:
+        bot.edit_message_text(chat_id=chat_id, message_id=msg_to_edit_id,
+                              text=f"{EMOJI_ERROR} Некорректный ID пользователя. Пожалуйста, введите число.")
+    del user_states[chat_id]
+    admin_callback_query(types.CallbackQuery(id='dummy', from_user=message.from_user, chat_instance='', data='admin_users_menu', message=types.Message(message_id=msg_to_edit_id, chat=message.chat)))
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('admin_revoke_premium'))
+def admin_revoke_premium_prompt(call):
+    chat_id = call.message.chat.id
+    bot.edit_message_text(chat_id=chat_id, message_id=call.message.message_id,
+                          text="Введите Telegram ID пользователя, у которого хотите убрать привилегию:",
+                          reply_markup=types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("Отмена", callback_data="admin_users_menu")))
+    user_states[chat_id] = {"state": "admin_waiting_revoke_premium", "message_id": call.message.message_id}
+
+@bot.message_handler(func=lambda message: user_states.get(message.chat.id, {}).get("state") == "admin_waiting_revoke_premium")
+def process_admin_revoke_premium(message):
+    chat_id = message.chat.id
+    if not is_admin(chat_id): return
+    msg_to_edit_id = user_states[chat_id].get("message_id")
+    try:
+        target_user_id = int(message.text)
+        user_data = get_user_data(target_user_id)
+        user_data["has_premium"] = False
+        bot.edit_message_text(chat_id=chat_id, message_id=msg_to_edit_id,
+                              text=f"{EMOJI_SUCCESS} У пользователя `{target_user_id}` убрана премиум-привилегия.", parse_mode='Markdown')
+        try: bot.send_message(target_user_id, f"{EMOJI_ERROR} Администратор убрал вашу премиум-привилегию.")
+        except Exception as e: print(f"Could not notify user {target_user_id}: {e}")
+    except ValueError:
+        bot.edit_message_text(chat_id=chat_id, message_id=msg_to_edit_id,
+                              text=f"{EMOJI_ERROR} Некорректный ID пользователя. Пожалуйста, введите число.")
+    del user_states[chat_id]
+    admin_callback_query(types.CallbackQuery(id='dummy', from_user=message.from_user, chat_instance='', data='admin_users_menu', message=types.Message(message_id=msg_to_edit_id, chat=message.chat)))
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('admin_grant_admin')) # Новая
+def admin_grant_admin_prompt(call):
+    chat_id = call.message.chat.id
+    if not is_super_admin(chat_id): # Только супер-админ может выдавать админки
+        bot.answer_callback_query(call.id, "Только супер-администратор может выдавать админки.")
+        return
+    bot.edit_message_text(chat_id=chat_id, message_id=call.message.message_id,
+                          text="Введите Telegram ID пользователя, которому хотите выдать админку:",
+                          reply_markup=types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("Отмена", callback_data="admin_users_menu")))
+    user_states[chat_id] = {"state": "admin_waiting_grant_admin", "message_id": call.message.message_id}
+
+@bot.message_handler(func=lambda message: user_states.get(message.chat.id, {}).get("state") == "admin_waiting_grant_admin")
+def process_admin_grant_admin(message):
+    chat_id = message.chat.id
+    if not is_super_admin(chat_id): return
+    msg_to_edit_id = user_states[chat_id].get("message_id")
+    try:
+        target_user_id = int(message.text)
+        if target_user_id in SUPER_ADMIN_IDS:
+             bot.edit_message_text(chat_id=chat_id, message_id=msg_to_edit_id,
+                                  text=f"{EMOJI_ERROR} Пользователь `{target_user_id}` уже является супер-админом.", parse_mode='Markdown')
+        else:
+            user_data = get_user_data(target_user_id)
+            user_data["is_admin"] = True
+            bot.edit_message_text(chat_id=chat_id, message_id=msg_to_edit_id,
+                                text=f"{EMOJI_SUCCESS} Пользователю `{target_user_id}` выдана админка.", parse_mode='Markdown')
+            try: bot.send_message(target_user_id, f"{EMOJI_ADMIN_PANEL} Администратор выдал вам права администратора!")
+            except Exception as e: print(f"Could not notify user {target_user_id}: {e}")
+    except ValueError:
+        bot.edit_message_text(chat_id=chat_id, message_id=msg_to_edit_id,
+                              text=f"{EMOJI_ERROR} Некорректный ID пользователя. Пожалуйста, введите число.")
+    del user_states[chat_id]
+    admin_callback_query(types.CallbackQuery(id='dummy', from_user=message.from_user, chat_instance='', data='admin_users_menu', message=types.Message(message_id=msg_to_edit_id, chat=message.chat)))
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('admin_revoke_admin')) # Новая
+def admin_revoke_admin_prompt(call):
+    chat_id = call.message.chat.id
+    if not is_super_admin(chat_id):
+        bot.answer_callback_query(call.id, "Только супер-администратор может отзывать админки.")
+        return
+    bot.edit_message_text(chat_id=chat_id, message_id=call.message.message_id,
+                          text="Введите Telegram ID пользователя, у которого хотите убрать админку:",
+                          reply_markup=types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("Отмена", callback_data="admin_users_menu")))
+    user_states[chat_id] = {"state": "admin_waiting_revoke_admin", "message_id": call.message.message_id}
+
+@bot.message_handler(func=lambda message: user_states.get(message.chat.id, {}).get("state") == "admin_waiting_revoke_admin")
+def process_admin_revoke_admin(message):
+    chat_id = message.chat.id
+    if not is_super_admin(chat_id): return
+    msg_to_edit_id = user_states[chat_id].get("message_id")
+    try:
+        target_user_id = int(message.text)
+        if target_user_id in SUPER_ADMIN_IDS:
+            bot.edit_message_text(chat_id=chat_id, message_id=msg_to_edit_id,
+                                  text=f"{EMOJI_ERROR} Невозможно отозвать админку у супер-админа `{target_user_id}`.", parse_mode='Markdown')
+        elif target_user_id in user_balances:
+            user_data = get_user_data(target_user_id)
+            user_data["is_admin"] = False
+            bot.edit_message_text(chat_id=chat_id, message_id=msg_to_edit_id,
+                                  text=f"{EMOJI_SUCCESS} У пользователя `{target_user_id}` убрана админка.", parse_mode='Markdown')
+            try: bot.send_message(target_user_id, f"{EMOJI_ERROR} Администратор убрал ваши права администратора.")
+            except Exception as e: print(f"Could not notify user {target_user_id}: {e}")
+        else:
+            bot.edit_message_text(chat_id=chat_id, message_id=msg_to_edit_id,
+                                  text=f"{EMOJI_ERROR} Пользователь с ID `{target_user_id}` не найден в данных бота.", parse_mode='Markdown')
+    except ValueError:
+        bot.edit_message_text(chat_id=chat_id, message_id=msg_to_edit_id,
+                              text=f"{EMOJI_ERROR} Некорректный ID пользователя. Пожалуйста, введите число.")
+    del user_states[chat_id]
+    admin_callback_query(types.CallbackQuery(id='dummy', from_user=message.from_user, chat_instance='', data='admin_users_menu', message=types.Message(message_id=msg_to_edit_id, chat=message.chat)))
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('admin_give_currency_prompt')) # Новая
+def admin_give_currency_prompt(call):
+    chat_id = call.message.chat.id
+    bot.edit_message_text(chat_id=chat_id, message_id=call.message.message_id,
+                          text="Введите ID пользователя и сумму монет через пробел (например, `12345 1000`):",
+                          reply_markup=types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("Отмена", callback_data="admin_users_menu")))
+    user_states[chat_id] = {"state": "admin_waiting_give_currency", "message_id": call.message.message_id}
+
+@bot.message_handler(func=lambda message: user_states.get(message.chat.id, {}).get("state") == "admin_waiting_give_currency")
+def process_admin_give_currency(message):
+    chat_id = message.chat.id
+    if not is_admin(chat_id): return
+    msg_to_edit_id = user_states[chat_id].get("message_id")
+    try:
+        parts = message.text.split()
+        target_user_id = int(parts[0])
+        amount = float(parts[1])
+        if amount <= 0: raise ValueError
+        
+        user_data = get_user_data(target_user_id)
+        update_balance(target_user_id, amount)
+        bot.edit_message_text(chat_id=chat_id, message_id=msg_to_edit_id,
+                              text=f"{EMOJI_SUCCESS} Пользователю `{target_user_id}` выдано `{amount:.2f}` монет.", parse_mode='Markdown')
+        try: bot.send_message(target_user_id, f"{EMOJI_BALANCE} Администратор выдал вам **{amount:.2f} монет**! Ваш новый баланс: {user_data['balance']:.2f}.", parse_mode='Markdown')
+        except Exception as e: print(f"Could not notify user {target_user_id}: {e}")
+    except (ValueError, IndexError):
+        bot.edit_message_text(chat_id=chat_id, message_id=msg_to_edit_id,
+                              text=f"{EMOJI_ERROR} Некорректный формат. Используйте `ID_пользователя СУММА`.")
+    del user_states[chat_id]
+    admin_callback_query(types.CallbackQuery(id='dummy', from_user=message.from_user, chat_instance='', data='admin_users_menu', message=types.Message(message_id=msg_to_edit_id, chat=message.chat)))
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('admin_give_ton_prompt')) # Новая
+def admin_give_ton_prompt(call):
+    chat_id = call.message.chat.id
+    bot.edit_message_text(chat_id=chat_id, message_id=call.message.message_id,
+                          text="Введите ID пользователя и сумму TON через пробел (например, `12345 1.5`):",
+                          reply_markup=types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("Отмена", callback_data="admin_users_menu")))
+    user_states[chat_id] = {"state": "admin_waiting_give_ton", "message_id": call.message.message_id}
+
+@bot.message_handler(func=lambda message: user_states.get(message.chat.id, {}).get("state") == "admin_waiting_give_ton")
+def process_admin_give_ton(message):
+    chat_id = message.chat.id
+    if not is_admin(chat_id): return
+    msg_to_edit_id = user_states[chat_id].get("message_id")
+    try:
+        parts = message.text.split()
+        target_user_id = int(parts[0])
+        amount = float(parts[1])
+        if amount <= 0: raise ValueError
+        
+        user_data = get_user_data(target_user_id)
+        update_ton_balance(target_user_id, amount)
+        bot.edit_message_text(chat_id=chat_id, message_id=msg_to_edit_id,
+                              text=f"{EMOJI_SUCCESS} Пользователю `{target_user_id}` выдано `{amount:.2f}` TON.", parse_mode='Markdown')
+        try: bot.send_message(target_user_id, f"{EMOJI_TON} Администратор выдал вам **{amount:.2f} TON**! Ваш новый TON-баланс: {user_data['ton_balance']:.2f}.", parse_mode='Markdown')
+        except Exception as e: print(f"Could not notify user {target_user_id}: {e}")
+    except (ValueError, IndexError):
+        bot.edit_message_text(chat_id=chat_id, message_id=msg_to_edit_id,
+                              text=f"{EMOJI_ERROR} Некорректный формат. Используйте `ID_пользователя СУММА`.")
+    del user_states[chat_id]
+    admin_callback_query(types.CallbackQuery(id='dummy', from_user=message.from_user, chat_instance='', data='admin_users_menu', message=types.Message(message_id=msg_to_edit_id, chat=message.chat)))
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('admin_get_user_info_prompt'))
+def admin_get_user_info_prompt(call):
+    chat_id = call.message.chat.id
+    bot.edit_message_text(chat_id=chat_id, message_id=call.message.message_id,
+                          text="Введите Telegram ID пользователя, информацию о котором хотите посмотреть:",
+
+reply_markup=types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("Отмена", callback_data="admin_users_menu")))
+    user_states[chat_id] = {"state": "admin_waiting_get_user_info", "message_id": call.message.message_id}
+
+@bot.message_handler(func=lambda message: user_states.get(message.chat.id, {}).get("state") == "admin_waiting_get_user_info")
+def process_admin_get_user_info(message):
+    chat_id = message.chat.id
+    if not is_admin(chat_id): return
+    msg_to_edit_id = user_states[chat_id].get("message_id")
+    try:
+        target_user_id = int(message.text)
+        user_info = get_user_data(target_user_id) # Используем get_user_data для получения или инициализации
+        
+        premium_status = "Активна 🌟" if user_info.get("has_premium", False) else "Неактивна ❌"
+        admin_status = "Да ✅" if user_info.get("is_admin", False) else "Нет ⛔"
+        donations = user_info.get("donations_count", 0)
+        balance = user_info.get("balance", 0)
+        ton_balance = user_info.get("ton_balance", 0)
+
+        info_text = (
+            f"**Информация о пользователе ID `{target_user_id}`:**\n"
+            f"  Баланс: {balance:.2f} монет\n"
+            f"  TON-баланс: {ton_balance:.2f} TON\n"
+            f"  Премиум-статус: {premium_status}\n"
+            f"  Статус администратора: {admin_status}\n"
+            f"  Количество донатов: {donations}"
+        )
+        bot.edit_message_text(chat_id=chat_id, message_id=msg_to_edit_id,
+                              text=info_text, parse_mode='Markdown')
+    except ValueError:
+        bot.edit_message_text(chat_id=chat_id, message_id=msg_to_edit_id,
+                              text=f"{EMOJI_ERROR} Некорректный ID пользователя. Пожалуйста, введите число.")
+    del user_states[chat_id]
+    admin_callback_query(types.CallbackQuery(id='dummy', from_user=message.from_user, chat_instance='', data='admin_users_menu', message=types.Message(message_id=msg_to_edit_id, chat=message.chat)))
+
+# --- Админ: Промокоды (продолжение) ---
+def generate_promocode_code(length=8):
+    characters = string.ascii_uppercase + string.digits
+    return ''.join(random.choice(characters) for i in range(length))
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('admin_create_promocode_prompt'))
+def admin_create_promocode_prompt(call):
+    chat_id = call.message.chat.id
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    markup.add(
+        types.InlineKeyboardButton("На монеты 💰", callback_data="admin_create_promocode_currency"),
+        types.InlineKeyboardButton("На TON 💎", callback_data="admin_create_promocode_ton"),
+        types.InlineKeyboardButton("Отмена", callback_data="admin_promocodes_menu")
+    )
+    bot.edit_message_text(chat_id=chat_id, message_id=call.message.message_id,
+                          text="Какой тип промокода вы хотите создать?", reply_markup=markup)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('admin_create_promocode_'))
+def admin_select_promocode_type(call):
+    chat_id = call.message.chat.id
+    promo_type = call.data.split('_')[-1] # currency или ton
+    bot.edit_message_text(chat_id=chat_id, message_id=call.message.message_id,
+                          text=f"Введите сумму и количество использований через пробел (например, `100 5` для {promo_type}):",
+                          reply_markup=types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("Отмена", callback_data="admin_promocodes_menu")))
+    user_states[chat_id] = {"state": "admin_waiting_create_promocode", "type": promo_type, "message_id": call.message.message_id}
+
+@bot.message_handler(func=lambda message: user_states.get(message.chat.id, {}).get("state") == "admin_waiting_create_promocode")
+def process_admin_create_promocode(message):
+    chat_id = message.chat.id
+    if not is_admin(chat_id): return
+    msg_to_edit_id = user_states[chat_id].get("message_id")
+    promo_type = user_states[chat_id]["type"]
+    try:
+        parts = message.text.split()
+        amount = float(parts[0])
+        uses_left = int(parts[1])
+        if amount <= 0 or uses_left <= 0: raise ValueError
+        
+        new_code = generate_promocode_code()
+        promocodes[new_code] = {"type": promo_type, "amount": amount, "uses_left": uses_left}
+        
+        bot.edit_message_text(chat_id=chat_id, message_id=msg_to_edit_id,
+                              text=f"{EMOJI_SUCCESS} Промокод **`{new_code}`** успешно создан!\n"
+                                   f"Тип: **{promo_type}**, Сумма: **{amount}**, Использований: **{uses_left}**.", parse_mode='Markdown')
+    except (ValueError, IndexError):
+        bot.edit_message_text(chat_id=chat_id, message_id=msg_to_edit_id,
+                              text=f"{EMOJI_ERROR} Некорректный формат. Используйте `СУММА КОЛИЧЕСТВО_ИСПОЛЬЗОВАНИЙ`.")
+    del user_states[chat_id]
+    admin_callback_query(types.CallbackQuery(id='dummy', from_user=message.from_user, chat_instance='', data='admin_promocodes_menu', message=types.Message(message_id=msg_to_edit_id, chat=message.chat)))
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('admin_view_promocodes'))
+def admin_view_promocodes(call):
+    chat_id = call.message.chat.id
+    if not is_admin(chat_id): return
+    
+    if not promocodes:
+        text = "Активных промокодов нет."
+    else:
+        text = "**Активные промокоды:**\n"
+        for code, info in promocodes.items():
+            text += f"`{code}`: {info['amount']} {info['type']} (осталось {info['uses_left']} использ.)\n"
+    
+    markup = types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("← Назад к Промокодам", callback_data="admin_promocodes_menu"))
+    bot.edit_message_text(chat_id=chat_id, message_id=call.message.message_id,
+                          text=text, parse_mode='Markdown', reply_markup=markup)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('admin_delete_promocode_prompt'))
+def admin_delete_promocode_prompt(call):
+    chat_id = call.message.chat.id
+    bot.edit_message_text(chat_id=chat_id, message_id=call.message.message_id,
+                          text="Введите промокод, который хотите удалить:",
+                          reply_markup=types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("Отмена", callback_data="admin_promocodes_menu")))
+    user_states[chat_id] = {"state": "admin_waiting_delete_promocode", "message_id": call.message.message_id}
+
+@bot.message_handler(func=lambda message: user_states.get(message.chat.id, {}).get("state") == "admin_waiting_delete_promocode")
+def process_admin_delete_promocode(message):
+    chat_id = message.chat.id
+    if not is_admin(chat_id): return
+    msg_to_edit_id = user_states[chat_id].get("message_id")
+    code_to_delete = message.text.strip().upper()
+    
+    if code_to_delete in promocodes:
+        del promocodes[code_to_delete]
+        bot.edit_message_text(chat_id=chat_id, message_id=msg_to_edit_id,
+                              text=f"{EMOJI_SUCCESS} Промокод `{code_to_delete}` успешно удален.", parse_mode='Markdown')
+    else:
+        bot.edit_message_text(chat_id=chat_id, message_id=msg_to_edit_id,
+                              text=f"{EMOJI_ERROR} Промокод `{code_to_delete}` не найден.", parse_mode='Markdown')
+    del user_states[chat_id]
+    admin_callback_query(types.CallbackQuery(id='dummy', from_user=message.from_user, chat_instance='', data='admin_promocodes_menu', message=types.Message(message_id=msg_to_edit_id, chat=message.chat)))
+
+# --- Админ: Казна Чата ---
+@bot.callback_query_handler(func=lambda call: call.data.startswith('admin_add_to_treasury_prompt'))
+def admin_add_to_treasury_prompt(call):
+    chat_id = call.message.chat.id
+    bot.edit_message_text(chat_id=chat_id, message_id=call.message.message_id,
+                          text="Введите сумму монет, которую хотите добавить в казну:",
+                          reply_markup=types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("Отмена", callback_data="admin_treasury_menu")))
+    user_states[chat_id] = {"state": "admin_waiting_add_treasury", "message_id": call.message.message_id}
+
+@bot.message_handler(func=lambda message: user_states.get(message.chat.id, {}).get("state") == "admin_waiting_add_treasury")
+def process_admin_add_to_treasury(message):
+    chat_id = message.chat.id
+    if not is_admin(chat_id): return
+    msg_to_edit_id = user_states[chat_id].get("message_id")
+    try:
+        amount = float(message.text)
+        if amount <= 0: raise ValueError
+        
+        chat_treasury["balance"] = chat_treasury.get("balance", 0) + amount
+        bot.edit_message_text(chat_id=chat_id, message_id=msg_to_edit_id,
+                              text=f"{EMOJI_SUCCESS} Добавлено {amount:.2f} монет в казну. Текущий баланс: {chat_treasury['balance']:.2f} монет.", parse_mode='Markdown')
+    except ValueError:
+        bot.edit_message_text(chat_id=chat_id, message_id=msg_to_edit_id,
+                              text=f"{EMOJI_ERROR} Некорректная сумма. Пожалуйста, введите положительное число.")
+    del user_states[chat_id]
+    admin_callback_query(types.CallbackQuery(id='dummy', from_user=message.from_user, chat_instance='', data='admin_treasury_menu', message=types.Message(message_id=msg_to_edit_id, chat=message.chat)))
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('admin_remove_from_treasury_prompt'))
+def admin_remove_from_treasury_prompt(call):
+    chat_id = call.message.chat.id
+    bot.edit_message_text(chat_id=chat_id, message_id=call.message.message_id,
+                          text="Введите сумму монет, которую хотите вывести из казны:",
+                          reply_markup=types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("Отмена", callback_data="admin_treasury_menu")))
+    user_states[chat_id] = {"state": "admin_waiting_remove_treasury", "message_id": call.message.message_id}
+
+@bot.message_handler(func=lambda message: user_states.get(message.chat.id, {}).get("state") == "admin_waiting_remove_treasury")
+def process_admin_remove_from_treasury(message):
+    chat_id = message.chat.id
+    if not is_admin(chat_id): return
+    msg_to_edit_id = user_states[chat_id].get("message_id")
+    try:
+        amount = float(message.text)
+        if amount <= 0: raise ValueError
+        
+        if chat_treasury.get("balance", 0) >= amount:
+            chat_treasury["balance"] -= amount
+            bot.edit_message_text(chat_id=chat_id, message_id=msg_to_edit_id,
+                                  text=f"{EMOJI_SUCCESS} Выведено {amount:.2f} монет из казны. Текущий баланс: {chat_treasury['balance']:.2f} монет.", parse_mode='Markdown')
+        else:
+            bot.edit_message_text(chat_id=chat_id, message_id=msg_to_edit_id,
+                                  text=f"{EMOJI_ERROR} В казне недостаточно средств. Текущий баланс: {chat_treasury['balance']:.2f} монет.", parse_mode='Markdown')
+    except ValueError:
+        bot.edit_message_text(chat_id=chat_id, message_id=msg_to_edit_id,
+                              text=f"{EMOJI_ERROR} Некорректная сумма. Пожалуйста, введите положительное число.")
+    del user_states[chat_id]
+    admin_callback_query(types.CallbackQuery(id='dummy', from_user=message.from_user, chat_instance='', data='admin_treasury_menu', message=types.Message(message_id=msg_to_edit_id, chat=message.chat)))
+
+# --- Админ: Рассылка ---
+@bot.callback_query_handler(func=lambda call: call.data.startswith('admin_start_broadcast_prompt'))
+def admin_start_broadcast_prompt(call):
+    chat_id = call.message.chat.id
+    bot.edit_message_text(chat_id=chat_id, message_id=call.message.message_id,
+                          text="Введите сообщение для рассылки. **Все активные пользователи получат его.**",
+                          reply_markup=types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("Отмена", callback_data="admin_broadcast_menu")))
+    user_states[chat_id] = {"state": "admin_waiting_broadcast_message", "message_id": call.message.message_id}
+
+@bot.message_handler(func=lambda message: user_states.get(message.chat.id, {}).get("state") == "admin_waiting_broadcast_message")
+def process_admin_broadcast(message):
+    chat_id = message.chat.id
+    if not is_admin(chat_id): return
+    msg_to_edit_id = user_states[chat_id].get("message_id")
+    
+    broadcast_text = message.text
+    sent_count = 0
+    failed_count = 0
+
+    bot.edit_message_text(chat_id=chat_id, message_id=msg_to_edit_id,
+                          text=f"{EMOJI_BROADCAST} Начинаю рассылку. Это может занять некоторое время...")
+    
+    for user_id in user_balances.keys():
+        try:
+            bot.send_message(user_id, f"{EMOJI_BROADCAST} **Сообщение от Администрации:**\n\n{broadcast_text}", parse_mode='Markdown')
+            sent_count += 1
+            time.sleep(0.1) # Небольшая задержка, чтобы избежать лимитов Telegram
+        except Exception as e:
+            failed_count += 1
+            print(f"Failed to send broadcast to {user_id}: {e}")
+            # Можно добавить логирование failed_count здесь
+
+    bot.edit_message_text(chat_id=chat_id, message_id=msg_to_edit_id,
+                          text=f"{EMOJI_SUCCESS} Рассылка завершена!\n"
+                               f"Отправлено: {sent_count}\n"
+                               f"Не удалось отправить: {failed_count}",
+                               reply_markup=types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("← Назад к Рассылке", callback_data="admin_broadcast_menu")))
+    del user_states[chat_id]
+    # Возвращаемся в меню рассылки через callback для корректного отображения кнопок
+    # admin_callback_query(types.CallbackQuery(id='dummy', from_user=message.from_user, chat_instance='', data='admin_broadcast_menu', message=types.Message(message_id=msg_to_edit_id, chat=message.chat)))
+
+# --- Запуск бота ---
+if __name__ == '__main__':
+    print("Бот запущен...")
+    bot.polling(none_stop=True)
