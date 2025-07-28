@@ -701,10 +701,7 @@ def spin_slot_machine(message):
     user_data["game_type"] = ""
     send_welcome(message)
 
----
-### Система Донатов и Привилегий (Crypto Pay)
 
-```python
 @bot.message_handler(regexp='Донат/Привилегии ✨')
 def donation_menu(message):
     chat_id = message.chat.id
